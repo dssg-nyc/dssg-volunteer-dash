@@ -1,6 +1,6 @@
 # DSSG NYC Volunteer Dashboard
 
-Internal Streamlit dashboard for DSSG NYC to track volunteer growth, event participation, and estimated impact.
+Internal Streamlit dashboard for DSSG NYC to track volunteer growth, conversion to participation, retention, and estimated impact.
 
 ## Repository Structure
 
@@ -115,9 +115,31 @@ Notes:
   - `event_name` contains `Hackathon` => `hackathon`
   - otherwise => `meetup`
 - Active volunteers KPI (365 days): registered volunteers with >=1 attendance in trailing 365 days
-- Short-term active context (90 days): same logic over trailing 90 days
+- Activation rate: `active_volunteers_365 / total_registered_volunteers`
+- Repeat participation rate (retention proxy): `% of unique attendee emails with attendance in >=2 distinct events`
+- Participation concentration (Top 2): `% of total event registrations that come from top 2 events by registrations`
+- Total event registrations are non-deduplicated and summed from Eventbrite `Ticket quantity`
 - Hackathon hours: `participants * 9`
 - Dollar impact: `hackathon_hours * $40`
+
+## Executive KPI Definitions
+
+- `Total Registered Volunteers`: unique emails from volunteer form submissions.
+- `Active Volunteers (365 Days)`: registered volunteer emails found in event data within trailing 365 days.
+- `Activation Rate`: active volunteers divided by total registered volunteers.
+- `Total Event Registrations (Non-Deduplicated)`: sum of Eventbrite `Ticket quantity` across all events.
+- `Unique Event Attendees`: distinct attendee emails in event records.
+- `Repeat Participation Rate`: share of unique attendees with participation in 2+ distinct events (used as a retention proxy).
+- `Total Events`: distinct Eventbrite events (meetups + hackathons).
+- `Total Hackathons`: distinct events classified as hackathons.
+- `Estimated Dollar Impact`: hackathon volunteer hours multiplied by `$40/hour`.
+
+## Executive Interpretation Guidance
+
+- **Activation Funnel:** Compare `Total Registered Volunteers` -> `Active Volunteers (365 Days)` to monitor conversion from sign-up to sustained engagement.
+- **Retention Signal (Proxy):** Use `Repeat Participation Rate` and the monthly first-time vs repeat trend to assess whether participation is recurring or one-off.
+- **Concentration Risk:** `Top 2 Event Concentration` highlights how dependent total participation is on a small set of events.
+- **Mission Alignment:** Review skill, role, and nonprofit-interest distributions together to align volunteer supply with program demand.
 
 ## Troubleshooting
 

@@ -36,7 +36,6 @@ GOOGLE_SHEETS_CACHE_TTL_SECONDS = 86_400
 HACKATHON_HOURS_PER_PERSON = 9
 HACKATHON_HOURLY_RATE = 40
 ACTIVE_WINDOW_DAYS = 365
-ACTIVE_CONTEXT_DAYS = 90
 
 BRAND_BLUE = "#0a447e"
 BRAND_ORANGE = "#fe803b"
@@ -437,11 +436,28 @@ def prepare_volunteer_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, An
         raise ValueError("Volunteer file is missing required registration or email columns.")
 
     domain_col = find_column(cleaned, ["Domain of Expertise", "Domain of Expertise ", "Domain"])
+    nonprofit_interest_col = find_column(
+        cleaned,
+        [
+            "Non-Profit Domain you're interested in",
+            "Nonprofit domain you're interested in",
+            "Non-Profit Domain",
+            "Nonprofit Domain",
+        ],
+    )
     years_col = find_column(
         cleaned,
         ["Years of Professional Experience", "Years of experience", "Experience"],
     )
     current_role_col = find_column(cleaned, ["Current Job / Role", "Current Role", "Role"])
+    board_interest_col = find_column(
+        cleaned,
+        [
+            "Are you interested in being on the DSSG Associate Board?",
+            "Are you interested in being on the DSSG Associate Board? ",
+            "Associate Board Interest",
+        ],
+    )
     employer_col = find_column(cleaned, ["Employer", "Company", "Organization"])
     industry_col = find_column(
         cleaned,
@@ -455,6 +471,11 @@ def prepare_volunteer_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, An
     cleaned["domain"] = (
         cleaned[domain_col].fillna("Unknown").astype(str).str.strip()
         if domain_col
+        else "Unknown"
+    )
+    cleaned["nonprofit_interest"] = (
+        cleaned[nonprofit_interest_col].fillna("Unknown").astype(str).str.strip()
+        if nonprofit_interest_col
         else "Unknown"
     )
     cleaned["years_experience"] = (
@@ -475,6 +496,11 @@ def prepare_volunteer_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, An
     cleaned["employer"] = (
         cleaned[employer_col].fillna("Unknown").astype(str).str.strip()
         if employer_col
+        else "Unknown"
+    )
+    cleaned["associate_board_interest"] = (
+        cleaned[board_interest_col].fillna("Unknown").astype(str).str.strip()
+        if board_interest_col
         else "Unknown"
     )
 
@@ -545,35 +571,173 @@ def compute_overview_metrics(
     volunteers: pd.DataFrame,
     events: pd.DataFrame,
     active_days: int = ACTIVE_WINDOW_DAYS,
-    active_context_days: int = ACTIVE_CONTEXT_DAYS,
 ) -> dict[str, float]:
-    today = pd.Timestamp.today().normalize()
-
-    active_window_events = events[
-        events["event_date"].notna() & (events["event_date"] >= today - pd.Timedelta(days=active_days))
-    ]
-    context_window_events = events[
-        events["event_date"].notna()
-        & (events["event_date"] >= today - pd.Timedelta(days=active_context_days))
-    ]
-    registered_emails = set(volunteers["volunteer_email"].dropna())
-    active_window_emails = set(active_window_events["participant_email"].dropna())
-    active_context_emails = set(context_window_events["participant_email"].dropna())
-
+    activation = compute_activation_metrics(volunteers, events, active_days=active_days)
+    repeat = compute_repeat_attendance_metrics(events)
+    concentration = compute_participation_concentration(events, top_n=2)
     hackathon_events = events[events["event_type"] == "hackathon"]
     hackathon_participants = int(hackathon_events["participant_count"].sum())
     hackathon_hours = hackathon_participants * HACKATHON_HOURS_PER_PERSON
     dollar_impact = hackathon_hours * HACKATHON_HOURLY_RATE
+    total_participants = int(events["participant_count"].sum())
+    meetup_participants = int(events.loc[events["event_type"] == "meetup", "participant_count"].sum())
+    hackathon_share = (
+        (hackathon_participants / total_participants) if total_participants > 0 else 0.0
+    )
+    meetup_share = (meetup_participants / total_participants) if total_participants > 0 else 0.0
 
     return {
-        "total_registered_volunteers": int(volunteers["volunteer_email"].nunique()),
-        "active_volunteers": int(len(registered_emails.intersection(active_window_emails))),
-        "active_volunteers_context": int(len(registered_emails.intersection(active_context_emails))),
+        "total_registered_volunteers": int(activation["total_registered_volunteers"]),
+        "active_volunteers": int(activation["active_volunteers"]),
+        "activation_rate": float(activation["activation_rate"]),
+        "unique_event_attendees": int(activation["unique_event_attendees"]),
+        "total_unique_emails": int(activation["total_unique_emails"]),
+        "registered_to_attendee_overlap": int(activation["registered_to_attendee_overlap"]),
         "total_events": int(events["event_key"].nunique()),
-        "total_event_participants": int(events["participant_count"].sum()),
+        "total_event_registrations": int(total_participants),
         "total_hackathons": int(hackathon_events["event_key"].nunique()),
+        "repeat_attendees": int(repeat["repeat_attendees"]),
+        "repeat_attendee_rate": float(repeat["repeat_attendee_rate"]),
+        "top_2_concentration_pct": float(concentration["concentration_pct"]),
+        "top_2_registrations": int(concentration["top_n_registrations"]),
         "hackathon_hours": int(hackathon_hours),
         "dollar_impact": int(dollar_impact),
+        "meetup_share": float(meetup_share),
+        "hackathon_share": float(hackathon_share),
+    }
+
+
+def compute_activation_metrics(
+    volunteers: pd.DataFrame,
+    events: pd.DataFrame,
+    active_days: int = ACTIVE_WINDOW_DAYS,
+) -> dict[str, float]:
+    today = pd.Timestamp.today().normalize()
+    registered_emails = set(volunteers["volunteer_email"].dropna())
+    attendee_emails = set(events["participant_email"].dropna())
+    overlap = registered_emails.intersection(attendee_emails)
+    unique_email_union = registered_emails.union(attendee_emails)
+
+    active_window_events = events[
+        events["event_date"].notna() & (events["event_date"] >= today - pd.Timedelta(days=active_days))
+    ]
+    active_window_emails = set(active_window_events["participant_email"].dropna())
+    active_registered = registered_emails.intersection(active_window_emails)
+
+    total_registered = len(registered_emails)
+    activation_rate = (len(active_registered) / total_registered) if total_registered > 0 else 0.0
+
+    return {
+        "total_registered_volunteers": float(total_registered),
+        "unique_event_attendees": float(len(attendee_emails)),
+        "total_unique_emails": float(len(unique_email_union)),
+        "registered_to_attendee_overlap": float(len(overlap)),
+        "active_volunteers": float(len(active_registered)),
+        "activation_rate": float(activation_rate),
+    }
+
+
+def compute_repeat_attendance_metrics(events: pd.DataFrame) -> dict[str, float]:
+    attendee_events = (
+        events.dropna(subset=["participant_email", "event_key"])
+        .loc[:, ["participant_email", "event_key"]]
+        .drop_duplicates()
+    )
+
+    if attendee_events.empty:
+        return {
+            "unique_attendees": 0.0,
+            "repeat_attendees": 0.0,
+            "repeat_attendee_rate": 0.0,
+        }
+
+    events_per_attendee = attendee_events.groupby("participant_email")["event_key"].nunique()
+    unique_attendees = int(events_per_attendee.shape[0])
+    repeat_attendees = int((events_per_attendee >= 2).sum())
+    repeat_rate = (repeat_attendees / unique_attendees) if unique_attendees > 0 else 0.0
+
+    return {
+        "unique_attendees": float(unique_attendees),
+        "repeat_attendees": float(repeat_attendees),
+        "repeat_attendee_rate": float(repeat_rate),
+    }
+
+
+def compute_monthly_first_vs_repeat(events: pd.DataFrame) -> pd.DataFrame:
+    attendee_events = (
+        events.dropna(subset=["participant_email", "event_date", "event_key"])
+        .loc[:, ["participant_email", "event_date", "event_key"]]
+        .drop_duplicates()
+        .sort_values("event_date")
+    )
+    if attendee_events.empty:
+        return pd.DataFrame(columns=["event_month", "first_time_attendees", "repeat_attendees"])
+
+    attendee_events["attendance_rank"] = attendee_events.groupby("participant_email").cumcount()
+    attendee_events["attendance_type"] = attendee_events["attendance_rank"].eq(0).map(
+        {True: "first_time_attendees", False: "repeat_attendees"}
+    )
+    attendee_events["event_month"] = attendee_events["event_date"].dt.to_period("M").dt.to_timestamp()
+
+    monthly = (
+        attendee_events.groupby(["event_month", "attendance_type"], as_index=False)["participant_email"]
+        .nunique()
+        .rename(columns={"participant_email": "attendees"})
+    )
+    pivot = monthly.pivot(
+        index="event_month", columns="attendance_type", values="attendees"
+    ).fillna(0)
+    for col in ["first_time_attendees", "repeat_attendees"]:
+        if col not in pivot.columns:
+            pivot[col] = 0
+    pivot = pivot.reset_index().sort_values("event_month")
+    pivot["first_time_attendees"] = pivot["first_time_attendees"].astype(int)
+    pivot["repeat_attendees"] = pivot["repeat_attendees"].astype(int)
+    return pivot[["event_month", "first_time_attendees", "repeat_attendees"]]
+
+
+def compute_participation_concentration(events: pd.DataFrame, top_n: int = 2) -> dict[str, float]:
+    per_event = compute_event_participants(events)
+    if per_event.empty:
+        return {"top_n_events": float(top_n), "top_n_registrations": 0.0, "concentration_pct": 0.0}
+
+    total_registrations = int(per_event["participants"].sum())
+    top_n_registrations = int(
+        per_event.sort_values("participants", ascending=False).head(top_n)["participants"].sum()
+    )
+    concentration_pct = (
+        (top_n_registrations / total_registrations) if total_registrations > 0 else 0.0
+    )
+    return {
+        "top_n_events": float(top_n),
+        "top_n_registrations": float(top_n_registrations),
+        "concentration_pct": float(concentration_pct),
+    }
+
+
+def compute_nonprofit_interest_distribution(
+    volunteers: pd.DataFrame, top_n: int = 10
+) -> pd.DataFrame:
+    return split_multiselect_counts(volunteers["nonprofit_interest"], top_n=top_n)
+
+
+def compute_data_quality_metrics(volunteers: pd.DataFrame, events: pd.DataFrame) -> dict[str, float]:
+    role_unknown = volunteers["current_role"].fillna("").astype(str).str.strip().str.lower()
+    employer_unknown = volunteers["employer"].fillna("").astype(str).str.strip().str.lower()
+    invalid_tokens = {"", "nan", "none", "na", "n/a", "null", "unknown"}
+
+    missing_role_pct = float(role_unknown.isin(invalid_tokens).mean()) if len(volunteers) else 0.0
+    missing_employer_pct = (
+        float(employer_unknown.isin(invalid_tokens).mean()) if len(volunteers) else 0.0
+    )
+    missing_participant_email_pct = (
+        float(events["participant_email"].isna().mean()) if len(events) else 0.0
+    )
+
+    return {
+        "missing_current_role_pct": missing_role_pct,
+        "missing_employer_pct": missing_employer_pct,
+        "missing_participant_email_pct": missing_participant_email_pct,
     }
 
 
@@ -594,6 +758,25 @@ def compute_monthly_registration_trends(volunteers: pd.DataFrame) -> pd.DataFram
         (monthly["new_registrations"] - previous_new) / previous_new * 100
     ).where(previous_new > 0)
     return monthly
+
+
+def compute_registered_base_mom_snapshot(growth: pd.DataFrame) -> dict[str, Optional[str]]:
+    if growth.empty:
+        return {"delta_text": None}
+
+    sorted_growth = growth.sort_values("registration_month").reset_index(drop=True)
+    if len(sorted_growth) < 2:
+        return {"delta_text": None}
+
+    latest = sorted_growth.iloc[-1]
+    previous = sorted_growth.iloc[-2]
+    prev_cumulative = float(previous["cumulative_volunteers"])
+    if prev_cumulative <= 0:
+        return {"delta_text": None}
+
+    latest_cumulative = float(latest["cumulative_volunteers"])
+    mom_pct = (latest_cumulative - prev_cumulative) / prev_cumulative * 100
+    return {"delta_text": f"{mom_pct:+.1f}% MoM"}
 
 
 def compute_monthly_participant_trends(events: pd.DataFrame) -> pd.DataFrame:
@@ -680,6 +863,7 @@ def single_value_counts(series: pd.Series, top_n: Optional[int] = None) -> pd.Da
 
 def compute_background_views(volunteers: pd.DataFrame) -> dict[str, pd.DataFrame]:
     domain = split_multiselect_counts(volunteers["domain"], top_n=12)
+    nonprofit_interest = compute_nonprofit_interest_distribution(volunteers, top_n=10)
 
     years = volunteers["years_experience"].fillna("Unknown").astype(str).str.strip()
     ordered_years = ["0-1 year", "2-5 years", "5-8 years", "8+ years", "Unknown"]
@@ -699,6 +883,7 @@ def compute_background_views(volunteers: pd.DataFrame) -> dict[str, pd.DataFrame
         "years": years_dist,
         "employer": employer,
         "current_role": current_role,
+        "nonprofit_interest": nonprofit_interest,
     }
 
 
@@ -790,8 +975,37 @@ def compute_section_one_context(volunteers: pd.DataFrame, events: pd.DataFrame) 
     }
 
 
+def build_executive_insights(kpis: dict[str, float]) -> list[str]:
+    activation_rate = float(kpis.get("activation_rate", 0.0))
+    repeat_rate = float(kpis.get("repeat_attendee_rate", 0.0))
+    meetup_share = float(kpis.get("meetup_share", 0.0))
+    hackathon_share = float(kpis.get("hackathon_share", 0.0))
+    top_2_concentration_pct = float(kpis.get("top_2_concentration_pct", 0.0))
+
+    return [
+        (
+            f"Activation: {format_percent(activation_rate)} of registered volunteers are active in the trailing "
+            f"{ACTIVE_WINDOW_DAYS} days ({format_int(kpis.get('active_volunteers', 0))} of "
+            f"{format_int(kpis.get('total_registered_volunteers', 0))})."
+        ),
+        (
+            f"Repeat participation (retention proxy): {format_percent(repeat_rate)} of unique attendees returned for 2+ events "
+            f"({format_int(kpis.get('repeat_attendees', 0))} of {format_int(kpis.get('unique_event_attendees', 0))})."
+        ),
+        (
+            f"Participation mix: Meetups contributed {format_percent(meetup_share)} of registrations and hackathons "
+            f"{format_percent(hackathon_share)}; top 2 events account for "
+            f"{format_percent(top_2_concentration_pct)} of all event registrations."
+        ),
+    ]
+
+
 def format_int(value: float) -> str:
     return f"{int(value):,}"
+
+
+def format_percent(value: float, decimals: int = 1) -> str:
+    return f"{value * 100:.{decimals}f}%"
 
 
 def format_currency(value: float) -> str:
@@ -805,9 +1019,18 @@ def format_event_label(event_type: str, event_date: pd.Timestamp) -> str:
     return f"{event_prefix} ({event_date.strftime('%Y-%m-%d')})"
 
 
-def build_chart_theme(fig, show_legend: bool = False):
+def build_chart_theme(
+    fig,
+    show_legend: bool = False,
+    reserve_legend_space: bool = False,
+):
     layout_config = {
-        "margin": dict(l=20, r=20, t=100 if show_legend else 70, b=20),
+        "margin": dict(
+            l=20,
+            r=20,
+            t=115 if (show_legend or reserve_legend_space) else 70,
+            b=20,
+        ),
         "legend_title_text": "",
         "showlegend": show_legend,
         "template": "plotly_white",
@@ -821,7 +1044,7 @@ def build_chart_theme(fig, show_legend: bool = False):
         layout_config["legend"] = dict(
             orientation="h",
             x=0.99,
-            y=1.02,
+            y=1.10,
             xanchor="right",
             yanchor="bottom",
             bgcolor="rgba(255,255,255,0.85)",
@@ -870,10 +1093,10 @@ def render_dashboard() -> None:
         st.title("DSSG NYC Volunteer Dashboard")
 
     st.caption(
-        "Internal dashboard for volunteer growth, event participation, and estimated social impact."
+        "Internal dashboard for volunteer growth, activation, retention, and estimated social impact."
     )
     st.caption(
-        "Data model: volunteer registrations come from the website Google Form tab, and event participation comes from the Eventbrite participants tab (meetups + hackathons)."
+        "Data model: volunteer registrations come from the website Google Form tab; event participation comes from the Eventbrite participants tab (meetups + hackathons)."
     )
 
     volunteers_raw, events_raw, source_info = load_input_data(base_dir)
@@ -891,57 +1114,128 @@ def render_dashboard() -> None:
             with st.expander("Data source diagnostics", expanded=False):
                 st.code(source_info["detail"])
 
-    overview = compute_overview_metrics(
-        volunteers,
-        events,
-        active_days=ACTIVE_WINDOW_DAYS,
-        active_context_days=ACTIVE_CONTEXT_DAYS,
-    )
+    last_refresh = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M %p")
+    st.caption(f"Dashboard rendered: {last_refresh}.")
+
+    overview = compute_overview_metrics(volunteers, events, active_days=ACTIVE_WINDOW_DAYS)
     section_one_context = compute_section_one_context(volunteers, events)
+    concentration = compute_participation_concentration(events, top_n=2)
+    data_quality = compute_data_quality_metrics(volunteers, events)
     growth = compute_monthly_registration_trends(volunteers)
+    registered_base_snapshot = compute_registered_base_mom_snapshot(growth)
     monthly_participants = compute_monthly_participant_trends(events)
+    monthly_first_vs_repeat = compute_monthly_first_vs_repeat(events)
     per_event = compute_event_participants(events)
     type_breakdown = compute_type_breakdown(events)
     hackathon_impact = compute_hackathon_impact(events)
     background = compute_background_views(volunteers)
+    executive_insights = build_executive_insights(overview)
+
+    st.divider()
+    st.header("Executive Snapshot")
+    st.write("Executive readout on activation, repeat participation, concentration, and impact.")
+    for insight in executive_insights:
+        st.markdown(f"- {insight}")
+
+    exec_row1 = st.columns(4)
+    exec_row1[0].metric(
+        "Registered Volunteers",
+        format_int(overview["total_registered_volunteers"]),
+        delta=registered_base_snapshot["delta_text"],
+        delta_color="normal",
+    )
+    exec_row1[1].metric(
+        f"Active ({ACTIVE_WINDOW_DAYS}D)",
+        format_int(overview["active_volunteers"]),
+    )
+    exec_row1[2].metric("Active Rate", format_percent(overview["activation_rate"]))
+    exec_row1[3].metric("Total Events", format_int(overview["total_events"]))
+
+    exec_row2 = st.columns(4)
+    exec_row2[0].metric(
+        "Event Registrations",
+        format_int(overview["total_event_registrations"]),
+    )
+    exec_row2[1].metric(
+        "Unique Attendees",
+        format_int(overview["unique_event_attendees"]),
+    )
+    exec_row2[2].metric(
+        "Repeat Participation",
+        format_percent(overview["repeat_attendee_rate"]),
+    )
+    exec_row2[3].metric(
+        "Top 2 Event Share",
+        format_percent(overview["top_2_concentration_pct"]),
+    )
+
+    exec_row3 = st.columns(2)
+    exec_row3[0].metric("Hackathons", format_int(overview["total_hackathons"]))
+    exec_row3[1].metric("Dollar Impact (Est.)", format_currency(overview["dollar_impact"]))
 
     st.divider()
     st.header("Section 1: Overview KPIs")
+    st.write("KPIs are grouped by reach, conversion, program scale, and impact.")
 
-    row1 = st.columns(4)
-    row1[0].metric("Total Registered Volunteers", format_int(overview["total_registered_volunteers"]))
-    row1[1].metric(
-        f"Active Volunteers ({ACTIVE_WINDOW_DAYS} Days)",
+    st.markdown("**Reach**")
+    reach_cols = st.columns(3)
+    reach_cols[0].metric("Registered Volunteers", format_int(overview["total_registered_volunteers"]))
+    reach_cols[1].metric("Unique Event Attendees", format_int(overview["unique_event_attendees"]))
+    reach_cols[2].metric("Total Unique Emails", format_int(overview["total_unique_emails"]))
+
+    st.markdown("**Conversion**")
+    conversion_cols = st.columns(2)
+    conversion_cols[0].metric(
+        f"Active Volunteers ({ACTIVE_WINDOW_DAYS}D)",
         format_int(overview["active_volunteers"]),
     )
-    row1[2].metric("Total Events", format_int(overview["total_events"]))
-    row1[3].metric("Total Event Participants", format_int(overview["total_event_participants"]))
+    conversion_cols[1].metric("Activation Rate", format_percent(overview["activation_rate"]))
 
-    row2 = st.columns(3)
-    row2[0].metric("Total Hackathons", format_int(overview["total_hackathons"]))
-    row2[1].metric(
-        "Estimated Hackathon Volunteer Hours",
+    st.markdown("**Program Scale**")
+    scale_cols = st.columns(3)
+    scale_cols[0].metric("Events", format_int(overview["total_events"]))
+    scale_cols[1].metric(
+        "Event Registrations",
+        format_int(overview["total_event_registrations"]),
+    )
+    scale_cols[2].metric("Hackathons", format_int(overview["total_hackathons"]))
+
+    st.markdown("**Impact**")
+    impact_kpi_cols = st.columns(2)
+    impact_kpi_cols[0].metric(
+        "Hackathon Hours (Est.)",
         format_int(overview["hackathon_hours"]),
     )
-    row2[2].metric("Estimated Dollar Impact", format_currency(overview["dollar_impact"]))
+    impact_kpi_cols[1].metric("Dollar Impact (Est.)", format_currency(overview["dollar_impact"]))
 
-    with st.expander("How To Read These KPIs", expanded=False):
+    with st.expander("How to Read These KPIs", expanded=False):
         st.markdown(
             f"""
             - **Total Registered Volunteers:** Unique emails from volunteer form submissions.
             - **Active Volunteers ({ACTIVE_WINDOW_DAYS} Days):** Registered volunteers whose email appears in event participation records within the last {ACTIVE_WINDOW_DAYS} days.
-            - **Total Events:** Unique Eventbrite events (meetups + hackathons).
-            - **Total Event Participants:** Sum of Eventbrite `Ticket quantity` across all events (not deduplicated, so repeat attendance is counted).
-            - **Current Overlap Context:** {format_int(section_one_context['matched_registered_attendees'])} registered volunteers attended at least one event; {format_int(section_one_context['external_attendees'])} attendee emails are not in the volunteer registration sheet.
+            - **Activation Rate:** Active volunteers divided by total registered volunteers.
+            - **Total Event Registrations (Non-Deduplicated):** Sum of Eventbrite `Ticket quantity` across all events (repeat attendance is counted).
+            - **Unique Event Attendees:** Distinct attendee emails in event records.
+            - **Total Unique Emails:** Deduplicated union of registered volunteer emails and event attendee emails.
+            - **Repeat Participation Rate:** Share of unique attendee emails with attendance at 2 or more distinct events. This is a retention proxy, not longitudinal membership retention.
             - **Method Notes:** Hackathon hours = participants × {HACKATHON_HOURS_PER_PERSON}; dollar impact = hours × ${HACKATHON_HOURLY_RATE}/hour.
+            - **Current Overlap Context:** {format_int(section_one_context['matched_registered_attendees'])} registered volunteers attended at least one event; {format_int(section_one_context['external_attendees'])} attendee emails are not in the volunteer registration sheet.
+            """
+        )
+
+    with st.expander("Data and Interpretation Limits", expanded=False):
+        st.markdown(
+            f"""
+            - **Email Match Logic:** Cross-source matching is based on email only. If someone used different emails across form and Eventbrite, overlap and activation can be understated.
+            - **Registration vs Check-In:** Event metrics are based on Eventbrite registrations/ticket quantity, not confirmed event check-ins.
+            - **Active vs Registered with >=1 Event:** Because the current program history is under {ACTIVE_WINDOW_DAYS} days, these two metrics may currently match. They will diverge once data spans beyond {ACTIVE_WINDOW_DAYS} days.
+            - **Repeat Participation Scope:** Repeat participation indicates repeated event registrations by attendee email; it is used here as a practical retention proxy.
             """
         )
 
     st.divider()
     st.header("Section 2: Volunteer Growth")
-    st.write(
-        "Track volunteer pipeline health over time using monthly new registrations and cumulative growth."
-    )
+    st.write("Track volunteer pipeline health with monthly registrations, growth rate, and cumulative base size.")
 
     if growth.empty:
         st.info("No registration trend data is available after date parsing.")
@@ -962,17 +1256,18 @@ def render_dashboard() -> None:
             go.Scatter(
                 x=growth["registration_month"],
                 y=growth["mom_growth_pct"],
-                name="MoM growth (%)",
+                name="MoM growth",
                 mode="lines+markers",
                 line=dict(color=BRAND_ORANGE, width=2),
                 marker=dict(size=7),
-                hovertemplate="MoM growth: %{y:.0f}%<extra></extra>",
+                hovertemplate="MoM growth: %{y:.1f}%<extra></extra>",
             ),
             secondary_y=True,
         )
         fig_new.update_layout(
-            title="Monthly Registrations + MoM Growth",
+            title="Monthly Registrations + MoM Change",
             hovermode="x unified",
+            showlegend=False,
         )
         fig_new.update_xaxes(title_text="")
         fig_new.update_yaxes(title_text="New volunteers", secondary_y=False)
@@ -982,31 +1277,52 @@ def render_dashboard() -> None:
             tickformat=".0f",
             ticksuffix="%",
         )
-        col1.plotly_chart(build_chart_theme(fig_new), use_container_width=True)
+        fig_new = build_chart_theme(fig_new, show_legend=False)
+        fig_new.update_yaxes(
+            title_font=dict(color=BRAND_BLUE),
+            tickfont=dict(color=BRAND_BLUE),
+            secondary_y=False,
+        )
+        fig_new.update_yaxes(
+            title_font=dict(color=BRAND_ORANGE),
+            tickfont=dict(color=BRAND_ORANGE),
+            secondary_y=True,
+        )
+        col1.plotly_chart(fig_new, use_container_width=True)
 
         fig_cumulative = px.area(
             growth,
             x="registration_month",
             y="cumulative_volunteers",
-            title="Cumulative Volunteer Count",
+            title="Cumulative Registered Volunteers",
             labels={
                 "registration_month": "Month",
                 "cumulative_volunteers": "Cumulative Volunteers",
             },
         )
         fig_cumulative.update_traces(
-            name="Cumulative volunteers",
-            showlegend=True,
-            line=dict(color=BRAND_ORANGE, width=3),
-            fillcolor="rgba(254,128,59,0.28)",
+            line=dict(color=BRAND_BLUE, width=3),
+            fillcolor="rgba(10,68,126,0.20)",
         )
         fig_cumulative.update_xaxes(title_text="")
         fig_cumulative.update_yaxes(tickformat=".0f")
-        col2.plotly_chart(build_chart_theme(fig_cumulative), use_container_width=True)
+        col2.plotly_chart(
+            build_chart_theme(fig_cumulative, reserve_legend_space=True),
+            use_container_width=True,
+        )
+
     st.divider()
     st.header("Section 3: Event Participation")
-    st.write(
-        "Measure attendance consistency across months and compare participation across event formats."
+    st.write("Assess participation volume, event-type mix, and repeat participation.")
+
+    concentration_cols = st.columns(2)
+    concentration_cols[0].metric(
+        "Top 2 Event Share of Registrations",
+        format_percent(concentration["concentration_pct"]),
+    )
+    concentration_cols[1].metric(
+        "Registrations from Top 2 Events",
+        format_int(concentration["top_n_registrations"]),
     )
 
     if monthly_participants.empty:
@@ -1017,7 +1333,7 @@ def render_dashboard() -> None:
             go.Bar(
                 x=monthly_participants["event_month"],
                 y=monthly_participants["meetup"],
-                name="Meetup participants",
+                name="Meetup registrations",
                 marker_color=BRAND_BLUE,
             )
         )
@@ -1025,14 +1341,14 @@ def render_dashboard() -> None:
             go.Bar(
                 x=monthly_participants["event_month"],
                 y=monthly_participants["hackathon"],
-                name="Hackathon participants",
+                name="Hackathon registrations",
                 marker_color=BRAND_ORANGE,
             )
         )
         fig_monthly.update_layout(
             barmode="stack",
             hovermode="x unified",
-            title="Monthly Event Participation by Type",
+            title="Monthly Registrations by Event Type",
         )
         fig_monthly.add_trace(
             go.Scatter(
@@ -1041,7 +1357,6 @@ def render_dashboard() -> None:
                 mode="text",
                 text=monthly_participants["total_participants"].astype(int).astype(str),
                 textposition="top center",
-                name="Total participants",
                 showlegend=False,
                 hoverinfo="skip",
                 cliponaxis=False,
@@ -1052,8 +1367,8 @@ def render_dashboard() -> None:
             fig_monthly.update_yaxes(
                 range=[0, monthly_participants["total_participants"].max() * 1.15]
             )
-        fig_monthly.update_xaxes(title_text="Month")
-        fig_monthly.update_yaxes(title_text="Participants")
+        fig_monthly.update_xaxes(title_text="")
+        fig_monthly.update_yaxes(title_text="Registrations")
         st.plotly_chart(build_chart_theme(fig_monthly, show_legend=True), use_container_width=True)
 
     col3, col4 = st.columns(2)
@@ -1061,7 +1376,7 @@ def render_dashboard() -> None:
     if per_event.empty:
         col3.info("No event-level participant view is available.")
     else:
-        chart_data = per_event.copy()
+        chart_data = per_event.copy().sort_values("event_date")
         chart_data["event_display_name"] = chart_data.apply(
             lambda row: row["event_name"] if row["event_type"] == "hackathon" else "Meetup",
             axis=1,
@@ -1070,17 +1385,16 @@ def render_dashboard() -> None:
             lambda row: row["event_name"] if row["event_type"] == "hackathon" else "",
             axis=1,
         )
-        chart_data = chart_data.sort_values("event_date")
         fig_per_event = px.bar(
             chart_data,
             x="event_date",
             y="participants",
             color="event_type",
             color_discrete_map={"meetup": BRAND_BLUE, "hackathon": BRAND_ORANGE},
-            title="Participants per Event (Timeline)",
+            title="Registrations by Event Date",
             labels={
                 "event_date": "Event date",
-                "participants": "Participants",
+                "participants": "Registrations",
                 "event_type": "Event type",
             },
             custom_data=["event_name", "event_display_name"],
@@ -1091,12 +1405,12 @@ def render_dashboard() -> None:
             cliponaxis=False,
             hovertemplate=(
                 "Date: %{x|%Y-%m-%d}<br>"
-                "Participants: %{y}<br>"
+                "Registrations: %{y}<br>"
                 "Event: %{customdata[0]}<br>"
                 "Type: %{customdata[1]}<extra></extra>"
             ),
         )
-        col3.plotly_chart(build_chart_theme(fig_per_event), use_container_width=True)
+        col3.plotly_chart(build_chart_theme(fig_per_event, show_legend=True), use_container_width=True)
 
     if type_breakdown.empty:
         col4.info("No meetup vs hackathon breakdown is available.")
@@ -1107,21 +1421,50 @@ def render_dashboard() -> None:
             names="event_type",
             color="event_type",
             color_discrete_map={"meetup": BRAND_BLUE, "hackathon": BRAND_ORANGE},
-            title="Engagement Mix: Meetup vs Hackathon Participation",
+            title="Registration Mix by Event Type",
             hole=0.45,
         )
         fig_type.update_traces(textposition="inside", textinfo="percent+label")
-        col4.plotly_chart(build_chart_theme(fig_type), use_container_width=True)
+        col4.plotly_chart(build_chart_theme(fig_type, show_legend=True), use_container_width=True)
+
+    if monthly_first_vs_repeat.empty:
+        st.info("No repeat attendance trend is available.")
+    else:
+        fig_repeat = go.Figure()
+        fig_repeat.add_trace(
+            go.Bar(
+                x=monthly_first_vs_repeat["event_month"],
+                y=monthly_first_vs_repeat["first_time_attendees"],
+                name="First-time attendees",
+                marker_color=BRAND_BLUE,
+            )
+        )
+        fig_repeat.add_trace(
+            go.Bar(
+                x=monthly_first_vs_repeat["event_month"],
+                y=monthly_first_vs_repeat["repeat_attendees"],
+                name="Repeat attendees",
+                marker_color=BRAND_ORANGE,
+            )
+        )
+        fig_repeat.update_layout(
+            barmode="stack",
+            hovermode="x unified",
+            title="Monthly Attendee Mix: First-Time vs Repeat",
+        )
+        fig_repeat.update_xaxes(title_text="")
+        fig_repeat.update_yaxes(title_text="Unique attendees")
+        st.plotly_chart(build_chart_theme(fig_repeat, show_legend=True), use_container_width=True)
 
     st.divider()
     st.header("Section 4: Impact")
     st.write(
-        "Hackathon engagement is translated into estimated volunteer hours and dollar value for impact storytelling."
+        f"Impact estimates from hackathon participation. Assumptions: hours = participants × {HACKATHON_HOURS_PER_PERSON}; dollar impact = hours × ${HACKATHON_HOURLY_RATE}."
     )
 
     impact_col1, impact_col2, impact_col3 = st.columns(3)
     impact_col1.metric("Total Hackathon Hours", format_int(overview["hackathon_hours"]))
-    impact_col2.metric("Estimated Total Dollar Value", format_currency(overview["dollar_impact"]))
+    impact_col2.metric("Estimated Dollar Impact", format_currency(overview["dollar_impact"]))
     impact_col3.metric(
         "Avg. Hackathon Hours per Event",
         format_int(
@@ -1145,21 +1488,19 @@ def render_dashboard() -> None:
             y="hackathon_hours",
             color="hackathon_hours",
             color_continuous_scale=BRAND_ORANGE_SCALE,
-            title="Impact Depth: Hackathon Volunteer Hours per Event",
+            title="Hackathon Volunteer Hours by Event",
             labels={
-                "event_label": "Hackathon Event",
-                "hackathon_hours": "Volunteer Hours",
+                "event_label": "Hackathon event",
+                "hackathon_hours": "Volunteer hours",
             },
             text="hackathon_hours",
         )
-        fig_hours.update_traces(name="Hackathon hours", showlegend=True, textposition="outside")
+        fig_hours.update_traces(textposition="outside")
         st.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_hours)), use_container_width=True)
 
     st.divider()
-    st.header("Section 5: Volunteer Background")
-    st.write(
-        "Profile volunteer capabilities to guide project staffing, partner matching, and targeted outreach."
-    )
+    st.header("Section 5: Volunteer Composition")
+    st.write("Profile volunteer skills and backgrounds to support staffing and outreach decisions.")
 
     bg1, bg2 = st.columns(2)
 
@@ -1173,10 +1514,9 @@ def render_dashboard() -> None:
             y="count",
             color="count",
             color_continuous_scale=BRAND_BLUE_SCALE,
-            title="Capability Mix: Volunteer Domain Expertise",
+            title="Volunteer Skill Areas (Domain Expertise)",
             labels={"category": "Domain", "count": "Volunteers"},
         )
-        fig_domain.update_traces(name="Volunteer count", showlegend=True)
         fig_domain.update_xaxes(tickangle=-30)
         bg1.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_domain)), use_container_width=True)
 
@@ -1190,10 +1530,9 @@ def render_dashboard() -> None:
             y="count",
             color="count",
             color_continuous_scale=BRAND_BLUE_SCALE,
-            title="Experience Depth: Years of Professional Experience",
+            title="Professional Experience Distribution",
             labels={"category": "Years of Experience", "count": "Volunteers"},
         )
-        fig_years.update_traces(name="Volunteer count", showlegend=True)
         bg2.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_years)), use_container_width=True)
 
     bg3, bg4 = st.columns(2)
@@ -1212,8 +1551,10 @@ def render_dashboard() -> None:
             title="Top Employers Represented",
             labels={"category": "Employer", "count": "Volunteers"},
         )
-        fig_employer.update_traces(name="Volunteer count", showlegend=True)
         bg3.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_employer)), use_container_width=True)
+        bg3.caption(
+            f"Employer field missing/unknown in {format_percent(data_quality['missing_employer_pct'])} of volunteer records."
+        )
 
     role_df = background["current_role"]
     if role_df.empty:
@@ -1225,12 +1566,27 @@ def render_dashboard() -> None:
             y="category",
             orientation="h",
             color="count",
-            color_continuous_scale=BRAND_ORANGE_SCALE,
-            title="Volunteer Role Mix (Standardized)",
+            color_continuous_scale=BRAND_BLUE_SCALE,
+            title="Current Role Distribution (Standardized)",
             labels={"category": "Current Role", "count": "Volunteers"},
         )
-        fig_roles.update_traces(name="Volunteer count", showlegend=True)
         bg4.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_roles)), use_container_width=True)
+
+    nonprofit_df = background["nonprofit_interest"]
+    if nonprofit_df.empty:
+        st.info("No nonprofit-interest data found.")
+    else:
+        fig_interest = px.bar(
+            nonprofit_df,
+            x="category",
+            y="count",
+            color="count",
+            color_continuous_scale=BRAND_BLUE_SCALE,
+            title="Top Nonprofit Interest Areas",
+            labels={"category": "Nonprofit interest area", "count": "Volunteers"},
+        )
+        fig_interest.update_xaxes(tickangle=-30)
+        st.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_interest)), use_container_width=True)
 
 
 if __name__ == "__main__":
