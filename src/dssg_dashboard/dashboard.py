@@ -347,6 +347,38 @@ def load_google_input_data(
     return volunteers, events, volunteer_tab_used, event_tab_used
 
 
+def summarize_fallback_reason(reason: Optional[str]) -> tuple[str, str, str]:
+    base_note = "Using local CSV fallback data."
+    if not reason:
+        return base_note, "", ""
+
+    normalized = reason.lower()
+    if "google credentials missing" in normalized:
+        return (
+            "Using local CSV fallback data because Google Sheets credentials are not configured for this runtime.",
+            "Set Streamlit app secrets (`gcp_service_account` or `GOOGLE_SERVICE_ACCOUNT_JSON`) to enable live updates.",
+            reason,
+        )
+    if "403" in normalized or "permission" in normalized:
+        return (
+            "Using local CSV fallback data because the Google service account cannot access the source sheet.",
+            "Share the sheet with the service-account email as Viewer and confirm the spreadsheet ID is correct.",
+            reason,
+        )
+    if "400" in normalized or "unable to parse range" in normalized:
+        return (
+            "Using local CSV fallback data because one or more tab names could not be read from Google Sheets.",
+            "Verify `GOOGLE_SHEETS_VOLUNTEER_TAB` and `GOOGLE_SHEETS_EVENT_TAB` values in env/secrets.",
+            reason,
+        )
+
+    return (
+        "Using local CSV fallback data because Google Sheets API load failed.",
+        "Review the technical diagnostic details below and update Streamlit secrets as needed.",
+        reason,
+    )
+
+
 def load_input_data(base_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
     load_local_env_files(base_dir)
     use_google_sheets = read_bool_env("USE_GOOGLE_SHEETS", default=True)
@@ -371,17 +403,26 @@ def load_input_data(base_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[st
                         f"Using live Google Sheets data (cache refresh every {format_cache_ttl(GOOGLE_SHEETS_CACHE_TTL_SECONDS)}). "
                         f"Tabs in use: volunteer='{volunteer_tab_used}', events='{event_tab_used}'."
                     ),
+                    "hint": "",
+                    "detail": "",
                 },
             )
         except Exception as exc:
             fallback_reason = f"{type(exc).__name__}: {exc}"
 
     volunteers_csv, events_csv = load_csvs(base_dir)
-    message = "Using local CSV fallback data."
-    if fallback_reason:
-        message += f" API load unavailable: {fallback_reason}"
+    message, hint, detail = summarize_fallback_reason(fallback_reason)
 
-    return volunteers_csv, events_csv, {"source": "Local CSV fallback", "note": message}
+    return (
+        volunteers_csv,
+        events_csv,
+        {
+            "source": "Local CSV fallback",
+            "note": message,
+            "hint": hint,
+            "detail": detail,
+        },
+    )
 
 
 def prepare_volunteer_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -801,24 +842,24 @@ def hide_colorbar_legend(fig):
 
 
 def render_dashboard() -> None:
-    st.set_page_config(
-        page_title="DSSG NYC Volunteer Dashboard",
-        page_icon="📊",
-        layout="wide",
-    )
-
     base_dir = REPO_ROOT
     load_local_env_files(base_dir)
 
     logo_candidates = [ASSETS_DIR / LOGO_FILE, base_dir / LEGACY_LOGO_FILE]
     logo_path = next((path for path in logo_candidates if path.exists()), None)
+
+    st.set_page_config(
+        page_title="DSSG NYC Volunteer Dashboard",
+        page_icon=str(logo_path) if logo_path else "📊",
+        layout="wide",
+    )
     if logo_path:
         logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("utf-8")
         st.markdown(
             f"""
             <div style="display:flex; align-items:center; gap:14px; margin-bottom:4px;">
                 <img src="data:image/png;base64,{logo_b64}" style="height:48px; width:auto;" />
-                <h1 style="margin:0; font-size:48px; line-height:1; color:#2f3142;">
+                <h1 style="margin:0; font-size:48px; line-height:1; color:inherit;">
                     DSSG NYC Volunteer Dashboard
                 </h1>
             </div>
@@ -844,6 +885,11 @@ def render_dashboard() -> None:
         st.caption(f"Data source: {source_info['source']} | {source_info['note']} {source_link}")
     else:
         st.info(f"Data source: {source_info['source']} | {source_info['note']} {source_link}")
+        if source_info.get("hint"):
+            st.caption(source_info["hint"])
+        if source_info.get("detail"):
+            with st.expander("Data source diagnostics", expanded=False):
+                st.code(source_info["detail"])
 
     overview = compute_overview_metrics(
         volunteers,

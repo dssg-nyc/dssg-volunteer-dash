@@ -20,6 +20,7 @@ Internal Streamlit dashboard for DSSG NYC to track volunteer growth, event parti
 ├── docs/
 │   └── PRD.md
 ├── .streamlit/
+│   ├── config.toml                # Default app theme (light / brand colors)
 │   └── secrets.toml.example        # Streamlit secrets template
 ├── .env.example                    # Environment template
 ├── .env.sh                         # Local env vars (ignored by git)
@@ -106,6 +107,7 @@ streamlit run app.py
 Notes:
 - If Google API is unavailable, the app automatically falls back to local CSV files.
 - Google Sheets reads are cached for 1 day by design.
+- The app defaults to a light theme (`.streamlit/config.toml`) for consistent chart readability.
 
 ## Business Logic Implemented
 
@@ -130,6 +132,7 @@ Check:
 3. `.env.sh` exists and contains the variables (or shell has exports)
 4. On Streamlit Cloud, credentials are set in App Settings -> Secrets
 5. You restarted Streamlit after changing env values
+6. If credentials are missing/invalid, the app will still run with local CSV fallback and show a diagnostic message in the UI
 
 ## Security Notes
 
