@@ -980,7 +980,6 @@ def build_executive_insights(kpis: dict[str, float]) -> list[str]:
     repeat_rate = float(kpis.get("repeat_attendee_rate", 0.0))
     meetup_share = float(kpis.get("meetup_share", 0.0))
     hackathon_share = float(kpis.get("hackathon_share", 0.0))
-    top_2_concentration_pct = float(kpis.get("top_2_concentration_pct", 0.0))
 
     return [
         (
@@ -994,8 +993,7 @@ def build_executive_insights(kpis: dict[str, float]) -> list[str]:
         ),
         (
             f"Participation mix: Meetups contributed {format_percent(meetup_share)} of registrations and hackathons "
-            f"{format_percent(hackathon_share)}; top 2 events account for "
-            f"{format_percent(top_2_concentration_pct)} of all event registrations."
+            f"{format_percent(hackathon_share)} of registrations."
         ),
     ]
 
@@ -1132,81 +1130,44 @@ def render_dashboard() -> None:
     executive_insights = build_executive_insights(overview)
 
     st.divider()
-    st.header("Executive Snapshot")
+    st.header("Section 1: Executive Summary")
     st.write("Executive readout on activation, repeat participation, concentration, and impact.")
     for insight in executive_insights:
         st.markdown(f"- {insight}")
 
-    exec_row1 = st.columns(4)
-    exec_row1[0].metric(
+    row1 = st.columns(3)
+    row1[0].metric(
         "Registered Volunteers",
         format_int(overview["total_registered_volunteers"]),
         delta=registered_base_snapshot["delta_text"],
         delta_color="normal",
     )
-    exec_row1[1].metric(
-        f"Active ({ACTIVE_WINDOW_DAYS}D)",
+    row1[1].metric(
+        f"Active Volunteers ({ACTIVE_WINDOW_DAYS}D)",
         format_int(overview["active_volunteers"]),
+        delta=f"Activation Rate {format_percent(overview['activation_rate'])}",
+        delta_color="off",
     )
-    exec_row1[2].metric("Active Rate", format_percent(overview["activation_rate"]))
-    exec_row1[3].metric("Total Events", format_int(overview["total_events"]))
+    row1[2].metric("Total Unique Emails", format_int(overview["total_unique_emails"]))
 
-    exec_row2 = st.columns(4)
-    exec_row2[0].metric(
+    row2 = st.columns(3)
+    row2[0].metric(
         "Event Registrations",
         format_int(overview["total_event_registrations"]),
     )
-    exec_row2[1].metric(
+    row2[1].metric(
         "Unique Attendees",
         format_int(overview["unique_event_attendees"]),
     )
-    exec_row2[2].metric(
+    row2[2].metric(
         "Repeat Participation",
         format_percent(overview["repeat_attendee_rate"]),
     )
-    exec_row2[3].metric(
-        "Top 2 Event Share",
-        format_percent(overview["top_2_concentration_pct"]),
-    )
 
-    exec_row3 = st.columns(2)
-    exec_row3[0].metric("Hackathons", format_int(overview["total_hackathons"]))
-    exec_row3[1].metric("Dollar Impact (Est.)", format_currency(overview["dollar_impact"]))
-
-    st.divider()
-    st.header("Section 1: Overview KPIs")
-    st.write("KPIs are grouped by reach, conversion, program scale, and impact.")
-
-    st.markdown("**Reach**")
-    reach_cols = st.columns(3)
-    reach_cols[0].metric("Registered Volunteers", format_int(overview["total_registered_volunteers"]))
-    reach_cols[1].metric("Unique Event Attendees", format_int(overview["unique_event_attendees"]))
-    reach_cols[2].metric("Total Unique Emails", format_int(overview["total_unique_emails"]))
-
-    st.markdown("**Conversion**")
-    conversion_cols = st.columns(2)
-    conversion_cols[0].metric(
-        f"Active Volunteers ({ACTIVE_WINDOW_DAYS}D)",
-        format_int(overview["active_volunteers"]),
-    )
-    conversion_cols[1].metric("Activation Rate", format_percent(overview["activation_rate"]))
-
-    st.markdown("**Program Scale**")
-    scale_cols = st.columns(3)
-    scale_cols[0].metric("Events", format_int(overview["total_events"]))
-    scale_cols[1].metric(
-        "Event Registrations",
-        format_int(overview["total_event_registrations"]),
-    )
-    scale_cols[2].metric("Hackathons", format_int(overview["total_hackathons"]))
-
-    st.markdown("**Impact**")
-    impact_kpi_cols = st.columns(2)
-    impact_kpi_cols[0].metric(
-        "Hackathon Hours (Est.)",
-        format_int(overview["hackathon_hours"]),
-    )
-    impact_kpi_cols[1].metric("Dollar Impact (Est.)", format_currency(overview["dollar_impact"]))
+    row3 = st.columns(3)
+    row3[0].metric("Total Events", format_int(overview["total_events"]))
+    row3[1].metric("Hackathons", format_int(overview["total_hackathons"]))
+    row3[2].metric("Dollar Impact (Est.)", format_currency(overview["dollar_impact"]))
 
     with st.expander("How to Read These KPIs", expanded=False):
         st.markdown(
@@ -1216,6 +1177,7 @@ def render_dashboard() -> None:
             - **Activation Rate:** Active volunteers divided by total registered volunteers.
             - **Total Event Registrations (Non-Deduplicated):** Sum of Eventbrite `Ticket quantity` across all events (repeat attendance is counted).
             - **Unique Event Attendees:** Distinct attendee emails in event records.
+            - **Total Events / Hackathons:** Distinct events tracked in Eventbrite after event-type classification.
             - **Total Unique Emails:** Deduplicated union of registered volunteer emails and event attendee emails.
             - **Repeat Participation Rate:** Share of unique attendee emails with attendance at 2 or more distinct events. This is a retention proxy, not longitudinal membership retention.
             - **Method Notes:** Hackathon hours = participants × {HACKATHON_HOURS_PER_PERSON}; dollar impact = hours × ${HACKATHON_HOURLY_RATE}/hour.
@@ -1228,7 +1190,7 @@ def render_dashboard() -> None:
             f"""
             - **Email Match Logic:** Cross-source matching is based on email only. If someone used different emails across form and Eventbrite, overlap and activation can be understated.
             - **Registration vs Check-In:** Event metrics are based on Eventbrite registrations/ticket quantity, not confirmed event check-ins.
-            - **Active vs Registered with >=1 Event:** Because the current program history is under {ACTIVE_WINDOW_DAYS} days, these two metrics may currently match. They will diverge once data spans beyond {ACTIVE_WINDOW_DAYS} days.
+            - **Active Metric Window:** Because program history is currently under {ACTIVE_WINDOW_DAYS} days, active counts are heavily influenced by anyone with at least one recent event registration.
             - **Repeat Participation Scope:** Repeat participation indicates repeated event registrations by attendee email; it is used here as a practical retention proxy.
             """
         )
