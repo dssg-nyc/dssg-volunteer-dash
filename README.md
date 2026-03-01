@@ -19,6 +19,8 @@ Internal Streamlit dashboard for DSSG NYC to track volunteer growth, event parti
 │   └── dssg_logo.png
 ├── docs/
 │   └── PRD.md
+├── .streamlit/
+│   └── secrets.toml.example        # Streamlit secrets template
 ├── .env.example                    # Environment template
 ├── .env.sh                         # Local env vars (ignored by git)
 ├── requirements.txt
@@ -36,7 +38,7 @@ This allows near real-time updates while keeping a stable offline path.
 
 ## Environment Variables
 
-Supported env vars:
+Supported config keys:
 
 - `USE_GOOGLE_SHEETS=true` (default: `true`)
 - `GOOGLE_SHEETS_ID` (default: `1AyvBMU87yUHmn9m74-NX6yDrTERYVVOXs8McvrKFqP4`)
@@ -45,6 +47,13 @@ Supported env vars:
 - Credentials (choose one):
   - `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json`
   - `GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account", ...}'`
+  - `gcp_service_account` (Streamlit secrets TOML table)
+
+Config loading order:
+
+1. Environment variables
+2. Streamlit secrets (`st.secrets`)
+3. Local defaults
 
 Local env handling:
 
@@ -79,6 +88,25 @@ cp .env.example .env.sh
 streamlit run app.py
 ```
 
+## Streamlit Community Cloud Deployment
+
+1. Push this repo to GitHub (done).
+2. Open [share.streamlit.io](https://share.streamlit.io) and create a new app:
+   - Repository: `fisher-c/dssg-volunteer-dash`
+   - Branch: `main`
+   - Main file path: `app.py`
+3. In app Settings -> Secrets, paste values from `.streamlit/secrets.toml.example`:
+   - Keep `USE_GOOGLE_SHEETS="true"`
+   - Set sheet/tab keys
+   - Add credentials as either:
+     - `GOOGLE_SERVICE_ACCOUNT_JSON` string, or
+     - `[gcp_service_account]` table (recommended)
+4. Save secrets and deploy/reboot app.
+
+Notes:
+- If Google API is unavailable, the app automatically falls back to local CSV files.
+- Google Sheets reads are cached for 1 day by design.
+
 ## Business Logic Implemented
 
 - Event classification:
@@ -100,7 +128,8 @@ Check:
 1. `GOOGLE_APPLICATION_CREDENTIALS` points to a valid JSON key path
 2. Service account has at least Viewer access to the sheet
 3. `.env.sh` exists and contains the variables (or shell has exports)
-4. You restarted Streamlit after changing env values
+4. On Streamlit Cloud, credentials are set in App Settings -> Secrets
+5. You restarted Streamlit after changing env values
 
 ## Security Notes
 

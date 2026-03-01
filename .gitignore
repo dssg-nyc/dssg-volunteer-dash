@@ -8,6 +8,7 @@ __pycache__/
 .env.*
 .env.sh
 dssg-488823-cb6eb0f8c1c3.json
+.streamlit/secrets.toml
 
 # OS/editor noise
 .DS_Store

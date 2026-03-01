@@ -89,6 +89,38 @@ def load_local_env_files(base_dir: Path) -> None:
             os.environ.setdefault(key, value)
 
 
+def read_config(name: str, default: Optional[str] = None) -> Optional[str]:
+    env_value = os.getenv(name)
+    if env_value is not None and env_value != "":
+        return env_value
+
+    try:
+        secret_value = st.secrets.get(name)  # type: ignore[arg-type]
+    except Exception:
+        secret_value = None
+
+    if secret_value is None:
+        return default
+    return str(secret_value)
+
+
+def read_secret_mapping(name: str) -> Optional[dict[str, Any]]:
+    try:
+        value = st.secrets.get(name)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+    if isinstance(value, dict):
+        return value
+
+    # Streamlit may return AttrDict; try dict coercion safely.
+    try:
+        coerced = dict(value) if value is not None else None
+    except Exception:
+        coerced = None
+    return coerced if isinstance(coerced, dict) else None
+
+
 def resolve_first_existing_path(candidates: list[Path]) -> Path:
     for candidate in candidates:
         if candidate.exists():
@@ -138,7 +170,7 @@ def parse_mixed_datetime(series: pd.Series) -> pd.Series:
 
 
 def read_bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
+    raw = read_config(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -201,8 +233,9 @@ def load_google_sheet_tab(sheet_id: str, tab_name: str) -> pd.DataFrame:
         ) from exc
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    creds_json = read_config("GOOGLE_SERVICE_ACCOUNT_JSON")
+    creds_path = read_config("GOOGLE_APPLICATION_CREDENTIALS")
+    creds_mapping = read_secret_mapping("gcp_service_account")
 
     credentials = None
     if creds_json:
@@ -211,6 +244,11 @@ def load_google_sheet_tab(sheet_id: str, tab_name: str) -> pd.DataFrame:
         except json.JSONDecodeError as exc:
             raise RuntimeError("`GOOGLE_SERVICE_ACCOUNT_JSON` is not valid JSON.") from exc
         credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
+    elif creds_mapping:
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_mapping,
+            scopes=scopes,
+        )
     elif creds_path:
         credentials_path = Path(creds_path)
         if not credentials_path.exists():
@@ -312,9 +350,9 @@ def load_google_input_data(
 def load_input_data(base_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
     load_local_env_files(base_dir)
     use_google_sheets = read_bool_env("USE_GOOGLE_SHEETS", default=True)
-    sheet_id = os.getenv("GOOGLE_SHEETS_ID", DEFAULT_GOOGLE_SHEETS_ID)
-    volunteer_tab = os.getenv("GOOGLE_SHEETS_VOLUNTEER_TAB", DEFAULT_VOLUNTEER_TAB)
-    event_tab = os.getenv("GOOGLE_SHEETS_EVENT_TAB", DEFAULT_EVENT_TAB)
+    sheet_id = read_config("GOOGLE_SHEETS_ID", DEFAULT_GOOGLE_SHEETS_ID)
+    volunteer_tab = read_config("GOOGLE_SHEETS_VOLUNTEER_TAB", DEFAULT_VOLUNTEER_TAB)
+    event_tab = read_config("GOOGLE_SHEETS_EVENT_TAB", DEFAULT_EVENT_TAB)
 
     fallback_reason: Optional[str] = None
     if use_google_sheets:
