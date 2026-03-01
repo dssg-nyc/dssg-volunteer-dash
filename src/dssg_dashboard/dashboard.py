@@ -1185,16 +1185,6 @@ def render_dashboard() -> None:
             """
         )
 
-    with st.expander("Data and Interpretation Limits", expanded=False):
-        st.markdown(
-            f"""
-            - **Email Match Logic:** Cross-source matching is based on email only. If someone used different emails across form and Eventbrite, overlap and activation can be understated.
-            - **Registration vs Check-In:** Event metrics are based on Eventbrite registrations/ticket quantity, not confirmed event check-ins.
-            - **Active Metric Window:** Because program history is currently under {ACTIVE_WINDOW_DAYS} days, active counts are heavily influenced by anyone with at least one recent event registration.
-            - **Repeat Participation Scope:** Repeat participation indicates repeated event registrations by attendee email; it is used here as a practical retention proxy.
-            """
-        )
-
     st.divider()
     st.header("Section 2: Volunteer Growth")
     st.write("Track volunteer pipeline health with monthly registrations, growth rate, and cumulative base size.")
@@ -1549,6 +1539,17 @@ def render_dashboard() -> None:
         )
         fig_interest.update_xaxes(tickangle=-30)
         st.plotly_chart(build_chart_theme(hide_colorbar_legend(fig_interest)), use_container_width=True)
+
+    st.divider()
+    with st.expander("Data Notes and Limitations", expanded=False):
+        st.markdown(
+            f"""
+            - **Email Match Logic:** Cross-source matching is based on email only. If someone used different emails across form and Eventbrite, overlap and activation can be understated.
+            - **Registration vs Check-In:** Event metrics are based on Eventbrite registrations/ticket quantity, not confirmed event check-ins.
+            - **Active Metric Window:** Because program history is currently under {ACTIVE_WINDOW_DAYS} days, active counts are heavily influenced by anyone with at least one recent event registration.
+            - **Repeat Participation Scope:** Repeat participation indicates repeated event registrations by attendee email; it is used here as a practical retention proxy.
+            """
+        )
 
 
 if __name__ == "__main__":
