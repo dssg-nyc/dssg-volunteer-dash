@@ -1,0 +1,13 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local environment config and secrets
+.env
+.env.*
+.env.sh
+dssg-488823-cb6eb0f8c1c3.json
+
+# OS/editor noise
+.DS_Store
