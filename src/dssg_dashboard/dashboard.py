@@ -1091,26 +1091,12 @@ def render_dashboard() -> None:
         st.title("DSSG NYC Volunteer Dashboard")
 
     st.caption(
-        "Internal dashboard for volunteer growth, activation, retention, and estimated social impact."
-    )
-    st.caption(
-        "Data model: volunteer registrations come from the website Google Form tab; event participation comes from the Eventbrite participants tab (meetups + hackathons)."
+        "Internal dashboard for volunteer growth, activation, retention, and estimated social impact. Data model: volunteer registrations come from the website Google Form tab; event participation comes from the Eventbrite participants tab (meetups + hackathons)."
     )
 
     volunteers_raw, events_raw, source_info = load_input_data(base_dir)
     volunteers, _ = prepare_volunteer_data(volunteers_raw)
     events = prepare_event_data(events_raw)
-
-    source_link = f"[Open source sheet]({SOURCE_SHEET_URL})"
-    if source_info["source"] == "Google Sheets API":
-        st.caption(f"Data source: {source_info['source']} | {source_info['note']} {source_link}")
-    else:
-        st.info(f"Data source: {source_info['source']} | {source_info['note']} {source_link}")
-        if source_info.get("hint"):
-            st.caption(source_info["hint"])
-        if source_info.get("detail"):
-            with st.expander("Data source diagnostics", expanded=False):
-                st.code(source_info["detail"])
 
     last_refresh = pd.Timestamp.now().strftime("%Y-%m-%d %I:%M %p")
     st.caption(f"Dashboard rendered: {last_refresh}.")
